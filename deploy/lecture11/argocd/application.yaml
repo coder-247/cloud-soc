@@ -1,10 +1,30 @@
 apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: cloud-soc-lab
+  namespace: argocd
+spec:
+  sourceRepos:
+    - https://github.com/coder-247/cloud-soc.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: cloud-soc-lab
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: apps
+      kind: Deployment
+    - group: ""
+      kind: Service
+---
+apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: cloud-soc-runtime-lab
   namespace: argocd
 spec:
-  project: default
+  project: cloud-soc-lab
   source:
     repoURL: https://github.com/coder-247/cloud-soc.git
     targetRevision: main
