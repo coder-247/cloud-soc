@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloud-soc-runtime
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloud-soc-runtime
+  template:
+    metadata:
+      labels:
+        app: cloud-soc-runtime
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: initialize-lab-credentials
+          image: cloud-soc-runtime:update-5009741
+          imagePullPolicy: Never
+          command:
+            - python
+            - -c
+          args:
+            - |
+              from pathlib import Path
+              from secrets import token_urlsafe
+              from werkzeug.security import generate_password_hash
+
+              root = Path("/run/lab")
+              root.joinpath("admin_hash").write_text(generate_password_hash(token_urlsafe(32)))
+              root.joinpath("issuer_password").write_text(token_urlsafe(32))
+          volumeMounts:
+            - name: lab-credentials
+              mountPath: /run/lab
+      containers:
+        - name: portal
+          image: cloud-soc-runtime:update-5009741
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: SOC_PUBLIC_URL
+              value: http://127.0.0.1:18080
+            - name: SOC_ENROLLMENT_ENABLED
+              value: "0"
+            - name: SOC_ELASTIC_ENDPOINT
+              value: https://127.0.0.1:9200
+            - name: SOC_INTERNAL_ES_URL
+              value: https://127.0.0.1:9200
+            - name: SOC_CA_FILE
+              value: /etc/ssl/certs/ca-certificates.crt
+            - name: SOC_ADMIN_HASH_FILE
+              value: /run/lab/admin_hash
+            - name: SOC_ISSUER_PASSWORD_FILE
+              value: /run/lab/issuer_password
+            - name: SOC_STATE_DIR
+              value: /data
+          readinessProbe:
+            tcpSocket:
+              port: http
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: lab-credentials
+              mountPath: /run/lab
+              readOnly: true
+            - name: lab-state
+              mountPath: /data
+      volumes:
+        - name: lab-credentials
+          emptyDir:
+            medium: Memory
+        - name: lab-state
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cloud-soc-runtime
+spec:
+  type: ClusterIP
+  selector:
+    app: cloud-soc-runtime
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
