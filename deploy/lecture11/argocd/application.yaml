@@ -1,0 +1,19 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cloud-soc-runtime-lab
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/coder-247/cloud-soc.git
+    targetRevision: main
+    path: deploy/lecture11/manifests
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cloud-soc-lab
+  syncPolicy:
+    automated:
+      enabled: true
+    syncOptions:
+      - CreateNamespace=true
