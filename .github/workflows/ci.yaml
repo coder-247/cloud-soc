@@ -4,19 +4,19 @@ on:
   push:
     branches: [main, develop, JEONGRIM-SEO]
   pull_request:
-    branches: [main,develop, JEONGRIM-SEO]
+    branches: [main, JEONGRIM-SEO]
   workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
   BACKEND_IMAGE: ${{ vars.BACKEND_IMAGE || 'ghcr.io/coder-247/cloud-soc-core' }}
-  FRONTEND_IMAGE: ${{ vars.FRONTEND_IMAGE }} 
-  GITOPS_REPO: ${{ vars.GITOPS_REPO || format('{0}/cloud-soc-gitops', github.repository_owner) }}
+  FRONTEND_IMAGE: ${{ vars.FRONTEND_IMAGE || 'ghcr.io/coder-247/cloud-soc-frontend' }}
+  GITOPS_REPO: ${{ vars.GITOPS_REPO || 'coder-247/cloud-soc-gitops' }}
   PYTHONPATH: src:.
 
 jobs:
   # =====================================================================
-  # 1단계: 코드 테스트 및 보안 탐지 룰 무결성/ReDoS 검증
+  # 1단계: 코드 품질, 단위/통합 테스트 및 보안 탐지 룰 무결성 검증
   # =====================================================================
   validate-and-test:
     name: Test Code & Validate Detection Rules
@@ -68,6 +68,15 @@ jobs:
         id: meta
         run: echo "short_sha=$(git rev-parse --short=8 HEAD)" >> $GITHUB_OUTPUT
 
+      - name: Check Frontend Dockerfile Existence
+        id: check_frontend
+        run: |
+          if [ -f frontend/Dockerfile ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -91,7 +100,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build & Push Frontend Image
-        if: hashFiles('frontend/Dockerfile') != ''
+        if: steps.check_frontend.outputs.exists == 'true'
         uses: docker/build-push-action@v5
         with:
           context: frontend
@@ -112,7 +121,7 @@ jobs:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/JEONGRIM-SEO')
     runs-on: ubuntu-latest
     concurrency:
-      group: gitops-sync-${{ vars.GITOPS_REPO }}
+      group: gitops-sync-${{ vars.GITOPS_REPO || 'coder-247/cloud-soc-gitops' }}
       cancel-in-progress: false
     steps:
       - name: Checkout App Repository (for latest rules/*.yml)
@@ -133,21 +142,20 @@ jobs:
         run: |
           mkdir -p gitops-repo/charts/cloud-soc/files/rules
 
-          # values.yaml이 없으면 기본 템플릿을 생성해 No such file or directory 오류를 방지
           if [ ! -f gitops-repo/charts/cloud-soc/values.yaml ]; then
-            cat <<EOF > gitops-repo/charts/cloud-soc/values.yaml
-namespace: cloud-soc
-
-images:
-  backend:
-    repository: ${{ env.BACKEND_IMAGE }}
-    tag: "latest" # backend-tag
-    pullPolicy: IfNotPresent
-  frontend:
-    repository: ${{ env.FRONTEND_IMAGE }}
-    tag: "latest" # frontend-tag
-    pullPolicy: IfNotPresent
-EOF
+            printf '%s\n' \
+              'namespace: cloud-soc' \
+              '' \
+              'images:' \
+              '  backend:' \
+              "    repository: ${BACKEND_IMAGE}" \
+              '    tag: "latest" # backend-tag' \
+              '    pullPolicy: IfNotPresent' \
+              '  frontend:' \
+              "    repository: ${FRONTEND_IMAGE}" \
+              '    tag: "latest" # frontend-tag' \
+              '    pullPolicy: IfNotPresent' \
+              > gitops-repo/charts/cloud-soc/values.yaml
           fi
 
           # 1. Helm values.yaml 내 백엔드 및 프론트엔드 이미지 태그 치환
@@ -156,3 +164,16 @@ EOF
 
           # 2. 최신 탐지 룰(rules/*.yml)을 GitOps 차트 ConfigMap 디렉토리로 동기화
           cp app-repo/rules/*.yml gitops-repo/charts/cloud-soc/files/rules/
+
+      - name: Commit & Push to GitOps Repository
+        working-directory: gitops-repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          if ! git diff --staged --quiet; then
+            git commit -m "chore(release): deploy cloud-soc image ${{ needs.build-and-push.outputs.image_tag }} & sync rules"
+            git push
+          else
+            echo "변경된 매니페스트나 룰이 없습니다."
+          fi
