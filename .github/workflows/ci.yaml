@@ -9,9 +9,9 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  BACKEND_IMAGE: ghcr.io/gandalem/cloud-soc-core
-  FRONTEND_IMAGE: ghcr.io/gandalem/cloud-soc-frontend
-  GITOPS_REPO: ${{ github.repository_owner }}/cloud-soc-gitops
+  BACKEND_IMAGE: ${{ vars.BACKEND_IMAGE || 'ghcr.io/coder-247/cloud-soc-core' }}
+  FRONTEND_IMAGE: ${{ vars.FRONTEND_IMAGE }}
+  GITOPS_REPO: ${{ vars.GITOPS_REPO || format('{0}/cloud-soc-gitops', github.repository_owner) }}
   PYTHONPATH: src:.
 
 jobs:
