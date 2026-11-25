@@ -4,13 +4,13 @@ on:
   push:
     branches: [main, develop, JEONGRIM-SEO]
   pull_request:
-    branches: [main, JEONGRIM-SEO]
+    branches: [main,develop, JEONGRIM-SEO]
   workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
   BACKEND_IMAGE: ${{ vars.BACKEND_IMAGE || 'ghcr.io/coder-247/cloud-soc-core' }}
-  FRONTEND_IMAGE: ${{ vars.FRONTEND_IMAGE }}
+  FRONTEND_IMAGE: ${{ vars.FRONTEND_IMAGE }} 
   GITOPS_REPO: ${{ vars.GITOPS_REPO || format('{0}/cloud-soc-gitops', github.repository_owner) }}
   PYTHONPATH: src:.
 
@@ -131,22 +131,28 @@ jobs:
         env:
           NEW_TAG: ${{ needs.build-and-push.outputs.image_tag }}
         run: |
+          mkdir -p gitops-repo/charts/cloud-soc/files/rules
+
+          # values.yaml이 없으면 기본 템플릿을 생성해 No such file or directory 오류를 방지
+          if [ ! -f gitops-repo/charts/cloud-soc/values.yaml ]; then
+            cat <<EOF > gitops-repo/charts/cloud-soc/values.yaml
+namespace: cloud-soc
+
+images:
+  backend:
+    repository: ${{ env.BACKEND_IMAGE }}
+    tag: "latest" # backend-tag
+    pullPolicy: IfNotPresent
+  frontend:
+    repository: ${{ env.FRONTEND_IMAGE }}
+    tag: "latest" # frontend-tag
+    pullPolicy: IfNotPresent
+EOF
+          fi
+
+          # 1. Helm values.yaml 내 백엔드 및 프론트엔드 이미지 태그 치환
           sed -i "s|tag: \".*\" # backend-tag|tag: \"${NEW_TAG}\" # backend-tag|g" gitops-repo/charts/cloud-soc/values.yaml
           sed -i "s|tag: \".*\" # frontend-tag|tag: \"${NEW_TAG}\" # frontend-tag|g" gitops-repo/charts/cloud-soc/values.yaml
 
-          mkdir -p gitops-repo/charts/cloud-soc/files/rules
+          # 2. 최신 탐지 룰(rules/*.yml)을 GitOps 차트 ConfigMap 디렉토리로 동기화
           cp app-repo/rules/*.yml gitops-repo/charts/cloud-soc/files/rules/
-
-      - name: Commit & Push to GitOps Repository
-        working-directory: gitops-repo
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git pull --rebase
-          git add .
-          if ! git diff --staged --quiet; then
-            git commit -m "chore(release): deploy cloud-soc image ${{ needs.build-and-push.outputs.image_tag }} & sync rules"
-            git push
-          else
-            echo "변경된 매니페스트나 룰이 없습니다."
-          fi
